@@ -1,51 +1,71 @@
-using System.Data;
-
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.IO;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using MyCourse.Models.Options;
+using MyCourse.Models.ValueObjects;
 
-namespace MyCourse.Models.Services.Infrastructure;
-
-public class SqliteDatabaseAccessor : IDatabaseAccessor
+namespace MyCourse.Models.Services.Infrastructure
 {
-    public async Task<DataSet> QueryAsync(FormattableString formattableQuery) 
+    public class SqliteDatabaseAccessor : IDatabaseAccessor
     {
-        var queryArguments = formattableQuery.GetArguments();
-        var sqliteParameters = new List<SqliteParameter>();
-        for (var i = 0; i < queryArguments.Length; i++)
+        private readonly ILogger<SqliteDatabaseAccessor> logger;
+        private readonly IOptionsMonitor<ConnectionStringsOptions> connectionStringOptions;
+
+        public SqliteDatabaseAccessor(ILogger<SqliteDatabaseAccessor> logger, IOptionsMonitor<ConnectionStringsOptions> connectionStringOptions)
         {
-            var parameter = new SqliteParameter(i.ToString(), queryArguments[i]);
-            sqliteParameters.Add(parameter);
-            queryArguments[i] = "@" + i;
+            this.logger = logger;
+            this.connectionStringOptions = connectionStringOptions;
         }
-        string query = formattableQuery.ToString();
-
-        using (var conn = new SqliteConnection("Data Source=Data/MyCourse.db"))
-        {    
-            await conn.OpenAsync();
-            using (var cmd = new SqliteCommand(query, conn))
+        public async Task<DataSet> QueryAsync(FormattableString formattableQuery) 
+        {
+            logger.LogInformation(formattableQuery.Format, formattableQuery.GetArguments());
+            var queryArguments = formattableQuery.GetArguments();
+            var sqliteParameters = new List<SqliteParameter>();
+            for (var i = 0; i < queryArguments.Length; i++)
             {
-                cmd.Parameters.AddRange(sqliteParameters);
+                if (queryArguments[i] is Sql) {
+                    continue;
+                }
+                var parameter = new SqliteParameter(i.ToString(), queryArguments[i]);
+                sqliteParameters.Add(parameter);
+                queryArguments[i] = "@" + i;
+            }
+            string query = formattableQuery.ToString();
 
-                using (var reader = await cmd.ExecuteReaderAsync())
+            string connectionString = connectionStringOptions.CurrentValue.Default;
+            //string connectionString = Path.Combine(Directory.GetCurrentDirectory(), "Data", "MyCourse.db");
+
+
+            //using (var conn = new SqliteConnection("Data Source=Data/MyCourse.db"))
+            using (var conn = new SqliteConnection(connectionString))
+            {    
+                await conn.OpenAsync();
+                using (var cmd = new SqliteCommand(query, conn))
                 {
-                    var dataSet = new DataSet();
-                    dataSet.EnforceConstraints = false;
-                    
-                    do 
-                    {
-                        var dataTable = new DataTable();
-                        dataSet.Tables.Add(dataTable);
-                        dataTable.Load(reader);
-                    } while (!reader.IsClosed);
+                    cmd.Parameters.AddRange(sqliteParameters);
 
-                    return dataSet;
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        var dataSet = new DataSet();
+                        dataSet.EnforceConstraints = false;
+                        
+                        do 
+                        {
+                            var dataTable = new DataTable();
+                            dataSet.Tables.Add(dataTable);
+                            dataTable.Load(reader);
+                        } while (!reader.IsClosed);
+
+                        return dataSet;
+                    }
                 }
             }
         }
-
-        throw new System.NotImplementedException();
     }
 }
